@@ -1,7 +1,5 @@
 # Tournament Management System (TMS)
 
-![TMS Cover](docs/assets/cover.png) *(Note: Please add a cover image if available)*
-
 **Tournament Management System (TMS)** is an enterprise-grade Software as a Service (SaaS) platform designed to facilitate the comprehensive creation, management, and tracking of tournaments. Built with modern web technologies, this platform supports various sports and e-sports disciplines through a modular Tournament Engine. 
 
 With a multi-tenant architecture, users can create Organizations, host Seasons, and execute up to 6 different competition algorithms (Round-Robin, Knock-out, Swiss System, Hybrid, Ladder, and League).

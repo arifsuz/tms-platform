@@ -46,3 +46,8 @@ next-env.d.ts
 # docs (PRD)
 /docs/*.md
 AGENTS.md
+
+# deployment
+.dockerignore
+Dockerfile
+docker-compose.yml
