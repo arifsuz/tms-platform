@@ -1,0 +1,301 @@
+// This is the Prisma schema for Tournament Management System (TMS)
+// Source of truth: docs/03_DATABASE_DESIGN.md
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ==========================================
+// 1. ENUMS
+// ==========================================
+
+enum SystemRole {
+  SUPER_ADMIN
+  USER
+}
+
+
+
+enum TournamentType {
+  ROUND_ROBIN
+  KNOCK_OUT
+  SWISS
+  HYBRID
+  LADDER
+  LEAGUE
+}
+
+enum TournamentStatus {
+  DRAFT
+  REGISTRATION
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum MatchStatus {
+  PENDING
+  ONGOING
+  COMPLETED
+  WALKOVER
+  DISPUTED
+}
+
+// ==========================================
+// 2. AUTH & USER ENTITIES (Better Auth Compatible)
+// ==========================================
+
+model User {
+  id            String     @id @default(cuid())
+  name          String
+  email         String     @unique
+  emailVerified Boolean    @default(false)
+  image         String?
+  systemRole    SystemRole @default(USER)
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  // Better Auth relations
+  sessions Session[]
+  accounts Account[]
+
+  // App relations
+  memberships Member[]
+  invitations Invitation[]
+  auditLogs   AuditLog[]
+
+  @@map("user")
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  userId    String
+  token     String   @unique
+  expiresAt DateTime
+  ipAddress String?
+  userAgent String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  activeOrganizationId String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("session")
+}
+
+model Account {
+  id                    String    @id @default(cuid())
+  userId                String
+  accountId             String
+  providerId            String
+  accessToken           String?
+  refreshToken          String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  idToken               String?
+  password              String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("account")
+}
+
+model Verification {
+  id         String    @id @default(cuid())
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime? @default(now())
+  updatedAt  DateTime? @updatedAt
+
+  @@map("verification")
+}
+
+// ==========================================
+// 3. ORGANIZATION (Multi-Tenant Root)
+// ==========================================
+
+model Organization {
+  id        String    @id @default(cuid())
+  name      String
+  slug      String    @unique
+  logo      String?
+  metadata  String?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  // Relations
+  members     Member[]
+  invitations Invitation[]
+  tournaments Tournament[]
+  auditLogs   AuditLog[]
+
+  @@map("organization")
+}
+
+model Member {
+  id             String   @id @default(cuid())
+  userId         String
+  organizationId String
+  role           String   @default("member")
+  createdAt      DateTime @default(now())
+
+  // Relations
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, organizationId])
+  @@map("member")
+}
+
+model Invitation {
+  id               String   @id @default(cuid())
+  organizationId   String
+  email            String
+  role             String?
+  status           String   @default("pending")
+  expiresAt        DateTime
+  inviterId        String
+  createdAt        DateTime @default(now())
+
+  // Custom fields
+  token            String?  @unique
+  updatedAt        DateTime @updatedAt
+
+  // Relations
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [inviterId], references: [id], onDelete: Cascade)
+
+  @@map("invitation")
+}
+
+// ==========================================
+// 4. TOURNAMENT ENGINE ENTITIES
+// ==========================================
+
+model Tournament {
+  id             String           @id @default(cuid())
+  organizationId String
+  name           String
+  slug           String           @unique
+  description    String?
+  game           String
+  type           TournamentType
+  status         TournamentStatus @default(DRAFT)
+  timezone       String           @default("UTC")
+
+  // JSONB — Dynamic rules config (win/loss points, tie-breakers)
+  rulesConfig Json @default("{}")
+
+  startDate DateTime?
+  endDate   DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  // Relations
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  participants Participant[]
+  matches      Match[]
+
+  @@index([organizationId])
+  @@index([status])
+  @@map("tournament")
+}
+
+model Participant {
+  id           String   @id @default(cuid())
+  tournamentId String
+  name         String
+  logo         String?
+
+  // JSONB — Game-specific cumulative stats
+  metadata Json @default("{}")
+
+  registeredAt DateTime @default(now())
+  status       String   @default("ACTIVE")
+
+  // Relations
+  tournament    Tournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  matchesAsHome Match[]    @relation("HomeParticipant")
+  matchesAsAway Match[]    @relation("AwayParticipant")
+
+  @@unique([tournamentId, name])
+  @@map("participant")
+}
+
+// ==========================================
+// 5. MATCH & SCORING ENTITIES
+// ==========================================
+
+model Match {
+  id           String @id @default(cuid())
+  tournamentId String
+
+  // Bracket/Round position
+  roundNumber     Int?
+  bracketPosition String?
+
+  // Participant relations
+  homeParticipantId String?
+  awayParticipantId String?
+
+  // Final scores
+  homeScore Float?
+  awayScore Float?
+
+  // JSONB — Per-set/round score details
+  matchDetails Json @default("{}")
+
+  status      MatchStatus @default(PENDING)
+  scheduledAt DateTime?
+  completedAt DateTime?
+
+  // Bracket progression (self-referencing for knockout)
+  nextMatchId     String?
+  nextMatch       Match?  @relation("BracketProgression", fields: [nextMatchId], references: [id])
+  previousMatches Match[] @relation("BracketProgression")
+
+  // Relations
+  tournament      Tournament   @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  homeParticipant Participant? @relation("HomeParticipant", fields: [homeParticipantId], references: [id])
+  awayParticipant Participant? @relation("AwayParticipant", fields: [awayParticipantId], references: [id])
+
+  @@index([tournamentId])
+  @@index([status])
+  @@map("match")
+}
+
+// ==========================================
+// 6. SYSTEM AUDIT & LOGGING
+// ==========================================
+
+model AuditLog {
+  id             String  @id @default(cuid())
+  organizationId String?
+  userId         String?
+  action         String
+  resourceType   String
+  resourceId     String
+  oldData        Json?
+  newData        Json?
+  ipAddress      String?
+  createdAt      DateTime @default(now())
+
+  // Relations
+  organization Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+  user         User?         @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId])
+  @@index([action])
+  @@map("audit_log")
+}
